@@ -6,6 +6,7 @@ Provides tools to play, stop, and list MP3 files in a specified directory.
 
 import asyncio
 import os
+import random
 from pathlib import Path
 from typing import Optional
 import pygame
@@ -20,6 +21,11 @@ pygame.mixer.init()
 MUSIC_FOLDER: Optional[Path] = None
 CURRENT_FILE: Optional[str] = None
 IS_PLAYING: bool = False
+PLAYLIST: list[str] = []
+CURRENT_INDEX: int = -1
+PLAY_MODE: str = "sequential"  # sequential, shuffle, repeat_all, repeat_one
+SHUFFLE_ORDER: list[int] = []
+AUTO_PLAY_TASK: Optional[asyncio.Task] = None
 
 
 def set_music_folder(folder_path: str) -> None:
@@ -78,12 +84,176 @@ def stop_playback() -> str:
 
 def get_status() -> str:
     """Get current playback status."""
+    status_parts = []
+    
     if IS_PLAYING and pygame.mixer.music.get_busy():
-        return f"Playing: {CURRENT_FILE}"
+        status_parts.append(f"Playing: {CURRENT_FILE}")
     elif CURRENT_FILE:
-        return f"Stopped (last played: {CURRENT_FILE})"
+        status_parts.append(f"Stopped (last played: {CURRENT_FILE})")
     else:
-        return "No music has been played yet"
+        status_parts.append("No music has been played yet")
+    
+    if PLAYLIST:
+        status_parts.append(f"\nPlaylist: {len(PLAYLIST)} tracks")
+        status_parts.append(f"Current position: {CURRENT_INDEX + 1}/{len(PLAYLIST)}")
+        status_parts.append(f"Play mode: {PLAY_MODE}")
+    
+    return "\n".join(status_parts)
+
+
+def create_playlist_from_all(shuffle: bool = False) -> str:
+    """Create a playlist from all MP3 files."""
+    global PLAYLIST, CURRENT_INDEX, SHUFFLE_ORDER
+    
+    files = get_mp3_files()
+    if not files:
+        return "No MP3 files found in the music folder"
+    
+    PLAYLIST = files
+    CURRENT_INDEX = 0
+    
+    if shuffle:
+        SHUFFLE_ORDER = list(range(len(PLAYLIST)))
+        random.shuffle(SHUFFLE_ORDER)
+    else:
+        SHUFFLE_ORDER = []
+    
+    return f"Playlist created with {len(PLAYLIST)} tracks" + (" (shuffled)" if shuffle else "")
+
+
+def set_play_mode(mode: str) -> str:
+    """Set the play mode."""
+    global PLAY_MODE, SHUFFLE_ORDER
+    
+    valid_modes = ["sequential", "shuffle", "repeat_all", "repeat_one"]
+    if mode not in valid_modes:
+        return f"Invalid mode. Valid modes: {', '.join(valid_modes)}"
+    
+    PLAY_MODE = mode
+    
+    # Create shuffle order if switching to shuffle mode
+    if mode == "shuffle" and PLAYLIST and not SHUFFLE_ORDER:
+        SHUFFLE_ORDER = list(range(len(PLAYLIST)))
+        random.shuffle(SHUFFLE_ORDER)
+    
+    return f"Play mode set to: {mode}"
+
+
+def get_next_index() -> Optional[int]:
+    """Get the next track index based on play mode."""
+    if not PLAYLIST:
+        return None
+    
+    if PLAY_MODE == "repeat_one":
+        return CURRENT_INDEX
+    
+    if PLAY_MODE == "shuffle":
+        if not SHUFFLE_ORDER:
+            SHUFFLE_ORDER.extend(range(len(PLAYLIST)))
+            random.shuffle(SHUFFLE_ORDER)
+        
+        current_shuffle_pos = SHUFFLE_ORDER.index(CURRENT_INDEX) if CURRENT_INDEX in SHUFFLE_ORDER else -1
+        next_shuffle_pos = (current_shuffle_pos + 1) % len(SHUFFLE_ORDER)
+        
+        if next_shuffle_pos == 0 and PLAY_MODE != "repeat_all":
+            return None  # End of playlist
+        
+        return SHUFFLE_ORDER[next_shuffle_pos]
+    
+    # Sequential or repeat_all
+    next_index = CURRENT_INDEX + 1
+    if next_index >= len(PLAYLIST):
+        if PLAY_MODE == "repeat_all":
+            return 0
+        return None
+    
+    return next_index
+
+
+def get_previous_index() -> Optional[int]:
+    """Get the previous track index."""
+    if not PLAYLIST or CURRENT_INDEX <= 0:
+        return None
+    
+    if PLAY_MODE == "shuffle" and SHUFFLE_ORDER:
+        current_shuffle_pos = SHUFFLE_ORDER.index(CURRENT_INDEX)
+        previous_shuffle_pos = (current_shuffle_pos - 1) % len(SHUFFLE_ORDER)
+        return SHUFFLE_ORDER[previous_shuffle_pos]
+    
+    return CURRENT_INDEX - 1
+
+
+def play_track_at_index(index: int) -> str:
+    """Play a track at a specific index."""
+    global CURRENT_INDEX
+    
+    if not PLAYLIST:
+        return "No playlist created. Use play_all first."
+    
+    if index < 0 or index >= len(PLAYLIST):
+        return f"Invalid index: {index}"
+    
+    CURRENT_INDEX = index
+    filename = PLAYLIST[CURRENT_INDEX]
+    return play_mp3(filename)
+
+
+def next_track() -> str:
+    """Skip to the next track."""
+    next_index = get_next_index()
+    
+    if next_index is None:
+        return "End of playlist reached"
+    
+    return play_track_at_index(next_index)
+
+
+def previous_track() -> str:
+    """Go back to the previous track."""
+    prev_index = get_previous_index()
+    
+    if prev_index is None:
+        return "Already at the beginning of playlist"
+    
+    return play_track_at_index(prev_index)
+
+
+def play_all(shuffle: bool = False) -> str:
+    """Play all MP3 files."""
+    result = create_playlist_from_all(shuffle)
+    if "No MP3 files" in result:
+        return result
+    
+    if shuffle:
+        set_play_mode("shuffle")
+    
+    return play_track_at_index(0)
+
+
+async def auto_play_monitor():
+    """Monitor playback and auto-play next track."""
+    global IS_PLAYING
+    
+    while True:
+        await asyncio.sleep(0.5)  # Check every 0.5 seconds
+        
+        if IS_PLAYING and not pygame.mixer.music.get_busy():
+            # Current track has finished
+            IS_PLAYING = False
+            
+            # Try to play next track
+            next_index = get_next_index()
+            if next_index is not None:
+                play_track_at_index(next_index)
+
+
+def start_auto_play_monitor():
+    """Start the auto-play monitor task."""
+    global AUTO_PLAY_TASK
+    
+    if AUTO_PLAY_TASK is None or AUTO_PLAY_TASK.done():
+        loop = asyncio.get_event_loop()
+        AUTO_PLAY_TASK = loop.create_task(auto_play_monitor())
 
 
 # Create MCP server
@@ -118,6 +288,53 @@ async def list_tools() -> list[Tool]:
             }
         ),
         Tool(
+            name="play_all",
+            description="Play all MP3 files in the folder with optional shuffle. Enables auto-play for continuous playback.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "shuffle": {
+                        "type": "boolean",
+                        "description": "Whether to shuffle the playlist (default: false)"
+                    }
+                },
+                "required": []
+            }
+        ),
+        Tool(
+            name="set_play_mode",
+            description="Set the playback mode: sequential, shuffle, repeat_all, or repeat_one",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "mode": {
+                        "type": "string",
+                        "description": "Play mode: 'sequential', 'shuffle', 'repeat_all', or 'repeat_one'",
+                        "enum": ["sequential", "shuffle", "repeat_all", "repeat_one"]
+                    }
+                },
+                "required": ["mode"]
+            }
+        ),
+        Tool(
+            name="next_track",
+            description="Skip to the next track in the playlist",
+            inputSchema={
+                "type": "object",
+                "properties": {},
+                "required": []
+            }
+        ),
+        Tool(
+            name="previous_track",
+            description="Go back to the previous track in the playlist",
+            inputSchema={
+                "type": "object",
+                "properties": {},
+                "required": []
+            }
+        ),
+        Tool(
             name="stop_playback",
             description="Stop the currently playing music",
             inputSchema={
@@ -128,7 +345,7 @@ async def list_tools() -> list[Tool]:
         ),
         Tool(
             name="get_playback_status",
-            description="Get the current playback status",
+            description="Get the current playback status including playlist info",
             inputSchema={
                 "type": "object",
                 "properties": {},
@@ -156,6 +373,24 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         result = play_mp3(filename)
         return [TextContent(type="text", text=result)]
     
+    elif name == "play_all":
+        shuffle = arguments.get("shuffle", False)
+        result = play_all(shuffle)
+        return [TextContent(type="text", text=result)]
+    
+    elif name == "set_play_mode":
+        mode = arguments.get("mode", "sequential")
+        result = set_play_mode(mode)
+        return [TextContent(type="text", text=result)]
+    
+    elif name == "next_track":
+        result = next_track()
+        return [TextContent(type="text", text=result)]
+    
+    elif name == "previous_track":
+        result = previous_track()
+        return [TextContent(type="text", text=result)]
+    
     elif name == "stop_playback":
         result = stop_playback()
         return [TextContent(type="text", text=result)]
@@ -180,6 +415,9 @@ async def main():
     else:
         print("Warning: MUSIC_FOLDER environment variable not set", flush=True)
         print("Please set it or modify the code to specify your music folder", flush=True)
+    
+    # Start auto-play monitor
+    start_auto_play_monitor()
     
     async with stdio_server() as (read_stream, write_stream):
         await app.run(read_stream, write_stream, app.create_initialization_options())
