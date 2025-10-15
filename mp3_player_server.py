@@ -247,13 +247,12 @@ async def auto_play_monitor():
                 play_track_at_index(next_index)
 
 
-def start_auto_play_monitor():
+async def start_auto_play_monitor():
     """Start the auto-play monitor task."""
     global AUTO_PLAY_TASK
     
     if AUTO_PLAY_TASK is None or AUTO_PLAY_TASK.done():
-        loop = asyncio.get_event_loop()
-        AUTO_PLAY_TASK = loop.create_task(auto_play_monitor())
+        AUTO_PLAY_TASK = asyncio.create_task(auto_play_monitor())
 
 
 # Create MCP server
@@ -417,7 +416,7 @@ async def main():
         print("Please set it or modify the code to specify your music folder", flush=True)
     
     # Start auto-play monitor
-    start_auto_play_monitor()
+    await start_auto_play_monitor()
     
     async with stdio_server() as (read_stream, write_stream):
         await app.run(read_stream, write_stream, app.create_initialization_options())
