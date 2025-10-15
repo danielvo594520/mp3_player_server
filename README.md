@@ -34,13 +34,8 @@ chmod +x ~/Documents/mcp-servers/mp3_player_server.py
 ### 4. MCP設定
 
 #### Cursor の場合（推奨）：
+
 `~/.cursor/mcp.json` を編集
-
-#### Claude Desktop の場合：
-- Mac: `~/Library/Application Support/Claude/claude_desktop_config.json` を編集
-- Windows: `%APPDATA%\Claude\claude_desktop_config.json` を編集
-
-設定例：
 
 ```json
 {
@@ -48,19 +43,46 @@ chmod +x ~/Documents/mcp-servers/mp3_player_server.py
     "mp3-player": {
       "command": "python3",
       "args": [
-        "/Users/yourname/Documents/mcp-servers/mp3_player_server.py"
+        "/Users/yourname/workspace/mp3_player_server/mp3_player_server/mp3_player_server.py"
       ],
       "env": {
-        "MUSIC_FOLDER": "/Users/yourname/Music/MyMP3s"
+        "MUSIC_FOLDER": "/Users/yourname/Music"
       }
     }
   }
 }
 ```
 
-**重要：**
+#### Claude Desktop の場合：
+
+**設定ファイルの場所：**
+- Mac: `~/Library/Application Support/Claude/claude_desktop_config.json`
+- Windows: `%APPDATA%\Claude\claude_desktop_config.json`
+
+**設定例（pyenvを使用している場合）：**
+
+```json
+{
+  "mcpServers": {
+    "mp3-player": {
+      "command": "/Users/yourname/.pyenv/versions/3.11.4/bin/python3",
+      "args": [
+        "/Users/yourname/workspace/mp3_player_server/mp3_player_server/mp3_player_server.py"
+      ],
+      "env": {
+        "MUSIC_FOLDER": "/Users/yourname/Music"
+      }
+    }
+  }
+}
+```
+
+**⚠️ 重要な注意点：**
+
 - `args` の部分を `mp3_player_server.py` の実際のパスに変更してください
 - `MUSIC_FOLDER` をMP3ファイルが入っているフォルダーのパスに変更してください
+- **pyenvを使用している場合**: Claude Desktopは`python3`コマンドでシステムのPythonを使おうとするため、pygameがインストールされていない可能性があります。その場合は、`command`にpyenvの完全なパスを指定してください（例: `/Users/yourname/.pyenv/versions/3.11.4/bin/python3`）
+  - 自分のpyenv Pythonパスを確認: `which python3`
 
 ### 5. 再起動
 
@@ -159,16 +181,47 @@ Claude/Cursor と会話する際、以下のようなリクエストができま
 ### 自動再生機能
 曲が終わると、設定されている再生モードに従って自動的に次の曲が再生されます。
 
+## プロジェクト構成
+
+```
+mp3_player_server/
+├── mp3_player_server.py      # メインサーバー（MCPプロトコル実装）
+├── README.md                  # このファイル
+└── claude_desktop_config.json # 設定ファイルの例（参考用）
+```
+
 ## トラブルシューティング
 
 ### MCPサーバーが認識されない場合
 
-1. Claude Desktop を完全に終了（タスクトレイからも）
+1. Cursor/Claude Desktop を完全に終了（タスクトレイからも）
 2. 設定ファイルのJSONが正しいか確認（カンマ、括弧など）
 3. ファイルパスが正しいか確認
-4. Claude Desktop のログを確認
-   - Mac: `~/Library/Logs/Claude/`
-   - Windows: `%APPDATA%\Claude\logs\`
+4. ログを確認
+   - Cursor: DevToolsのコンソール
+   - Claude Desktop: `~/Library/Logs/Claude/` (Mac) / `%APPDATA%\Claude\logs\` (Windows)
+
+### "ModuleNotFoundError: No module named 'pygame'" エラーが出る場合
+
+**原因**: Claude Desktopが異なるPythonインタープリターを使用している
+
+**解決方法**:
+
+1. pygameがインストールされているPythonのパスを確認:
+   ```bash
+   which python3
+   # 例: /Users/yourname/.pyenv/shims/python3
+   
+   python3 -c "import sys; print(sys.executable)"
+   # 例: /Users/yourname/.pyenv/versions/3.11.4/bin/python3
+   ```
+
+2. Claude Desktopの設定ファイルで、`command`を完全なパスに変更:
+   ```json
+   "command": "/Users/yourname/.pyenv/versions/3.11.4/bin/python3"
+   ```
+
+3. Claude Desktopを再起動
 
 ### 音楽が再生されない場合
 
@@ -176,7 +229,7 @@ Claude/Cursor と会話する際、以下のようなリクエストができま
 2. フォルダー内に.mp3ファイルが存在するか確認
 3. ファイル名に日本語や特殊文字が含まれている場合、エンコーディングの問題が起こる可能性があります
 
-### pygameのエラーが出る場合
+### pygameのシステム依存関係が不足している場合
 
 ```bash
 # システムの依存関係をインストール（Ubuntu/Debianの場合）
@@ -240,8 +293,31 @@ AI: ⏭️ 次の曲にスキップしました
 - **言語**: Python 3.11+
 - **依存関係**: mcp, pygame
 - **対応フォーマット**: MP3
+- **プロトコル**: MCP (Model Context Protocol)
+- **通信方式**: stdio (標準入出力)
 - **自動再生**: 非同期タスクで監視
 - **日本語対応**: ファイル名に日本語や絵文字を含むファイルに対応
+
+## 既知の問題と制限事項
+
+### 制限事項
+- **対応フォーマット**: 現在はMP3ファイルのみ対応（WAV、OGGなどは未対応）
+- **サブフォルダー**: デフォルトでは指定フォルダー直下のMP3ファイルのみを検索（サブフォルダーは検索しない）
+- **同時再生**: 同時に複数の曲を再生することはできません
+- **音量調整**: 現在のバージョンでは音量調整機能はありません
+- **プレイリスト保存**: プレイリストの保存機能はありません（セッション終了時にリセット）
+
+### 既知の問題
+- **pyenvとClaude Desktop**: Claude Desktopでpyenvを使用している場合、明示的なPythonパスの指定が必要（上記トラブルシューティング参照）
+- **長いファイル名**: 極端に長いファイル名（255文字以上）は表示が崩れる可能性があります
+- **特殊な文字**: 一部の特殊文字（絵文字以外）を含むファイル名で問題が発生する可能性があります
+
+### 将来の機能追加候補
+- 音量調整機能
+- WAV、OGG、FLACなどの他のオーディオフォーマット対応
+- プレイリストの保存・読込機能
+- イコライザー機能
+- 再生位置のシーク機能
 
 ## ライセンス
 
